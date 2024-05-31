@@ -249,7 +249,7 @@ class CarlaEnv(gym.Env):
             self.lane_invasion_hist = []
 
         if len(self.lane_invasion_hist) != 0:
-            reward += -20
+            reward += -10
             self.lane_invasion_hist = []
 
         # # Reward for speed
@@ -260,7 +260,7 @@ class CarlaEnv(gym.Env):
 
         reward += 0.2 * kmh
 
-        reward += 2 * square_dist_diff
+        reward += 1.3 * square_dist_diff
 
         # # Reward for distance to road lines
         # if not self.playing:

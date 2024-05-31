@@ -1,6 +1,7 @@
 import gym
 import numpy as np
 from stable_baselines3 import SAC
+from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.sac import CnnPolicy
 from stable_baselines3.common.noise import NormalActionNoise
 from carla_env import CarlaEnv
@@ -20,6 +21,7 @@ def main(model_name, load_model, town, fps, im_width, im_height, repeat_action, 
     test_env = CarlaEnv(town, fps, im_width, im_height, repeat_action, start_transform_type, sensors,
                    action_type, enable_preview=True, steps_per_episode=steps_per_episode, playing=True)
     
+    checkpoint_callback = CheckpointCallback(save_freq=10000, save_path='./logs/', name_prefix='sac_model')
     
     try:
         if load_model:
@@ -38,13 +40,24 @@ def main(model_name, load_model, town, fps, im_width, im_height, repeat_action, 
                 tensorboard_log='./sem_sac',
                 action_noise=NormalActionNoise(mean=np.array([0.3, 0]), sigma=np.array([0.5, 0.1]))
                 )
-        print(model.__dict__)
-        model.learn(
-            total_timesteps=100000, 
-            log_interval=4,
-            tb_log_name=model_name,  
-            )
-        model.save(model_name)
+            print(model.__dict__)
+            model.learn(    
+                total_timesteps=100000, 
+                log_interval=4,
+                tb_log_name=model_name,
+                callback=checkpoint_callback
+                )
+            model.save(model_name)
+        
+        if load_model:
+            obs = test_env.reset()
+            done = False
+            while not done:
+                action, _states = model.predict(obs)
+                obs, reward, done, info = test_env.step(action)
+                test_env.render()
+                print(f"Reward: {reward}, Info: {info}")
+                
     finally:
         env.close()
         test_env.close()
