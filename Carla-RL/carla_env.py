@@ -15,7 +15,6 @@ from setup import setup
 from absl import logging
 import graphics
 import pygame
-
 logging.set_verbosity(logging.INFO)
 
 # Carla environment
@@ -42,6 +41,7 @@ class CarlaEnv(gym.Env):
         self.steps_per_episode = steps_per_episode
         self.playing = playing
         self.preview_camera_enabled = enable_preview
+        
         # self.episode = 0
         print("c")
         
@@ -95,6 +95,7 @@ class CarlaEnv(gym.Env):
             try:
                 # Get random spot from a list from predefined spots and try to spawn a car there
                 self.start_transform = self._get_start_transform()
+                self.end_transform = self._get_end_tranform()
                 self.curr_loc = self.start_transform.location
                 self.vehicle = self.world.spawn_actor(self.lincoln, self.start_transform)
                 break
@@ -218,6 +219,11 @@ class CarlaEnv(gym.Env):
         square_dist_diff = new_dist_from_start ** 2 - self.dist_from_start ** 2
         self.dist_from_start = new_dist_from_start
 
+        #Calculate distant to end
+        dist_to_end = loc.distance(self.end_transform.location)
+        dist_text = str(dist_to_end)
+        self.world.debug.draw_string(location=loc,text=dist_text,life_time=1.0)
+
         image = self.front_image_Queue.get()
         image = np.array(image.raw_data)
         image = image.reshape((self.im_height, self.im_width, -1))
@@ -243,7 +249,7 @@ class CarlaEnv(gym.Env):
 
         # # If car collided - end and episode and send back a penalty
         if len(self.collision_hist) != 0:
-            done = True
+            #done = True
             reward += -120
             self.collision_hist = []
             self.lane_invasion_hist = []
@@ -270,15 +276,16 @@ class CarlaEnv(gym.Env):
         if self.frame_step >= self.steps_per_episode:
             done = True
 
-        if not self._on_highway():
-            self.out_of_loop += 1
-            if self.out_of_loop >= 20:
-                done = True
-        else:
-            self.out_of_loop = 0
+        # if not self._on_highway():
+        #     self.out_of_loop += 1
+        #     if self.out_of_loop >= 20:
+        #         done = True
+        # else:
+        #     self.out_of_loop = 0
 
-        # self.total_reward += reward
+        #self.total_reward += reward
 
+        self.world.debug.draw_arrow(begin=self.start_transform.location, end=self.end_transform.location, life_time=1.0)
         if done:
             # info['episode'] = {}
             # info['episode']['l'] = self.frame_step
@@ -370,7 +377,7 @@ class CarlaEnv(gym.Env):
         if self.start_transform_type == 'random':
             return random.choice(self.map.get_spawn_points())
         if self.start_transform_type == 'fixed':
-            start_transform = self.map.get_spawn_points()[0]
+            start_transform = self.map.get_spawn_points()[70]
             return start_transform
         if self.start_transform_type == 'highway':
             if self.map.name == "Town04":
@@ -383,6 +390,14 @@ class CarlaEnv(gym.Env):
             else:
                 raise NotImplementedError
             
+    def _get_end_tranform(self):
+        indices = [213, 215, 217, 71, 221, 224, 72, 87, 108]
+        end_transform = []
+        for i in indices:
+            end_transform.append(self.map.get_spawn_points()[i])
+        return random.choice(end_transform)
+
+
     # def _get_start_transform(self):
     #     # 예시: 특정 위치로 시작 위치를 설정하는 코드
     #     spawn_points = self.world.get_map().get_spawn_points()
