@@ -24,8 +24,9 @@ class CarlaEnv(gym.Env):
 
     def __init__(self, town, fps, im_width, im_height, repeat_action, start_transform_type, sensors,
                  action_type, enable_preview, steps_per_episode, playing=False, timeout=60):
+        super(CarlaEnv, self).__init__()
+
         self.client, self.world, self.frame, self.server = setup(town=town, fps=fps, client_timeout=timeout)
-        print("b")
         self.client.set_timeout(5.0)
         self.map = self.world.get_map()
         blueprint_library = self.world.get_blueprint_library()
@@ -43,7 +44,6 @@ class CarlaEnv(gym.Env):
         self.preview_camera_enabled = enable_preview
         
         # self.episode = 0
-        print("c")
         
 
     @property
@@ -55,7 +55,7 @@ class CarlaEnv(gym.Env):
     def action_space(self):
         """Returns the expected action passed to the `step` method."""
         if self.action_type == 'continuous':
-            return gym.spaces.Box(low=np.array([-1.0, -1.0]), high=np.array([1.0, 1.0]))
+            return gym.spaces.Box(low=np.array([0.0, -1.0]), high=np.array([1.0, 1.0]))
         elif self.action_type == 'discrete':
             return gym.spaces.MultiDiscrete([4, 9])
         else:
@@ -81,6 +81,7 @@ class CarlaEnv(gym.Env):
         self.frame_step = 0
         self.out_of_loop = 0
         self.dist_from_start = 0
+
         # self.total_reward = 0
 
         self.front_image_Queue = Queue()
@@ -96,6 +97,7 @@ class CarlaEnv(gym.Env):
                 # Get random spot from a list from predefined spots and try to spawn a car there
                 self.start_transform = self._get_start_transform()
                 self.end_transform = self._get_end_tranform()
+                self.prev_dist = self.start_transform.location.distance(self.end_transform.location)
                 self.curr_loc = self.start_transform.location
                 self.vehicle = self.world.spawn_actor(self.lincoln, self.start_transform)
                 break
@@ -196,10 +198,11 @@ class CarlaEnv(gym.Env):
 
         # Apply control to the vehicle based on an action
         if self.action_type == 'continuous':
-            if action[0] > 0:
-                action = carla.VehicleControl(throttle=float(action[0]), steer=float(action[1]), brake=0)
-            else:
-                action = carla.VehicleControl(throttle=0, steer=float(action[1]), brake= -float(action[0]))
+            action = carla.VehicleControl(throttle=float(action[0]), steer=float(action[1]))
+            # if action[0] > 0:
+            #     action = carla.VehicleControl(throttle=float(action[0]), steer=float(action[1]), brake=0)
+            # else:
+            #     action = carla.VehicleControl(throttle=0, steer=float(action[1]), brake= -float(action[0]))
         elif self.action_type == 'discrete':
             if action[0] == 0:
                 action = carla.VehicleControl(throttle=0, steer=float((action[1] - 4)/4), brake=1)
@@ -215,14 +218,13 @@ class CarlaEnv(gym.Env):
         kmh = 3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2)
 
         loc = self.vehicle.get_location()
-        new_dist_from_start = loc.distance(self.start_transform.location)
-        square_dist_diff = new_dist_from_start ** 2 - self.dist_from_start ** 2
-        self.dist_from_start = new_dist_from_start
 
         #Calculate distant to end
         dist_to_end = loc.distance(self.end_transform.location)
+
+    
         dist_text = str(dist_to_end)
-        self.world.debug.draw_string(location=loc,text=dist_text,life_time=1.0)
+        self.world.debug.draw_string(location=loc,text=dist_text,life_time=0.01)
 
         image = self.front_image_Queue.get()
         image = np.array(image.raw_data)
@@ -247,9 +249,15 @@ class CarlaEnv(gym.Env):
         reward = 0
         info = dict()
 
+        reward += (self.prev_dist - dist_to_end) * 3
+        if dist_to_end < 2.0:
+            done = True
+            reward += 1000
+        self.prev_dist = dist_to_end
+
         # # If car collided - end and episode and send back a penalty
         if len(self.collision_hist) != 0:
-            #done = True
+            done = True
             reward += -120
             self.collision_hist = []
             self.lane_invasion_hist = []
@@ -266,7 +274,7 @@ class CarlaEnv(gym.Env):
 
         reward += 0.2 * kmh
 
-        reward += 1.3 * square_dist_diff
+        # reward += 1.3 * square_dist_diff
 
         # # Reward for distance to road lines
         # if not self.playing:
@@ -276,16 +284,15 @@ class CarlaEnv(gym.Env):
         if self.frame_step >= self.steps_per_episode:
             done = True
 
-        # if not self._on_highway():
-        #     self.out_of_loop += 1
-        #     if self.out_of_loop >= 20:
-        #         done = True
-        # else:
-        #     self.out_of_loop = 0
 
         #self.total_reward += reward
 
         self.world.debug.draw_arrow(begin=self.start_transform.location, end=self.end_transform.location, life_time=1.0)
+
+        spectator = self.world.get_spectator()
+        transform = self.vehicle.get_transform()
+        spectator.set_transform(carla.Transform(transform.location + carla.Location(z=50),carla.Rotation(pitch=-90)))
+
         if done:
             # info['episode'] = {}
             # info['episode']['l'] = self.frame_step
@@ -396,20 +403,3 @@ class CarlaEnv(gym.Env):
         for i in indices:
             end_transform.append(self.map.get_spawn_points()[i])
         return random.choice(end_transform)
-
-
-    # def _get_start_transform(self):
-    #     # 예시: 특정 위치로 시작 위치를 설정하는 코드
-    #     spawn_points = self.world.get_map().get_spawn_points()
-    #     start_transform = spawn_points[0]  # 첫 번째 스폰 포인트를 사용
-    #     return start_transform
-
-            # Another possible implementation, not as good
-            # if self.map.name == "Town04":
-            #     road_id = 47
-            #     road_length = 117.
-            #     init_transforms = []
-            #     for _ in range(num_vehicles):
-            #         lane_id = random.choice([-1, -2, -3, -4])
-            #         vehicle_s = np.random.uniform(road_length)  # length of road 47
-            #         init_transforms.append(self.map.get_waypoint_xodr(road_id, lane_id, vehicle_s).transform)
