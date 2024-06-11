@@ -50,13 +50,15 @@ def main(model_name, load_model, town, fps, im_width, im_height, repeat_action, 
             model.save(model_name)
         
         if load_model:
-            obs = test_env.reset()
-            done = False
-            while not done:
-                action, _states = model.predict(obs)
-                obs, reward, done, info = test_env.step(action)
-                test_env.render()
-                print(f"Reward: {reward}, Info: {info}")
+            test_episode_length = 10
+            for test_episode in range(test_episode_length):
+                obs = test_env.reset()
+                done = False
+                while not done:
+                    action, _states = model.predict(obs)
+                    obs, reward, done, info = test_env.step(action)
+                    test_env.render()
+                    print(f"Reward: {reward}, Info: {info}")
                 
     finally:
         env.close()
