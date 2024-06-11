@@ -19,7 +19,7 @@ def main(model_name, load_model, town, fps, im_width, im_height, repeat_action, 
     env = CarlaEnv(town, fps, im_width, im_height, repeat_action, start_transform_type, sensors,
                    action_type, enable_preview, steps_per_episode, playing=False)
     test_env = CarlaEnv(town, fps, im_width, im_height, repeat_action, start_transform_type, sensors,
-                   action_type, enable_preview=True, steps_per_episode=steps_per_episode, playing=True)
+                   action_type, enable_preview=False, steps_per_episode=steps_per_episode, playing=True)
     
     checkpoint_callback = CheckpointCallback(save_freq=10000, save_path='./logs/', name_prefix='sac_model')
     
