@@ -9,17 +9,15 @@ import random
 import numpy as np
 import math
 from queue import Queue
-from misc import dist_to_roadline, exist_intersection
-from gym import spaces
+from threading import Event
+from misc import dist_to_roadline, exist_intersections
 from setup import setup
 from absl import logging
 import graphics
 import pygame
 logging.set_verbosity(logging.INFO)
 
-# Carla environment
 class CarlaEnv(gym.Env):
-
     metadata = {'render.modes': ['human']}
 
     def __init__(self, town, fps, im_width, im_height, repeat_action, start_transform_type, sensors,
@@ -43,14 +41,22 @@ class CarlaEnv(gym.Env):
         self.playing = playing
         self.preview_camera_enabled = enable_preview
         
-        # self.episode = 0
+        if self.preview_camera_enabled:
+            self.preview_image_Queue = Queue()
         
+        self.observation_space = gym.spaces.Dict({
+            # 'image' = depth + segmentation, 'vehilce' = spped + steer + distant 
+            'image' : gym.spaces.Box(low=0, high= 255, shape=(self.im_width, self.im_height, 6), dtype=np.uint8),
+            'vehicle': gym.spaces.Box(low=-1.0, high=np.inf, shape=(3,), dtype=np.float32)
 
-    @property
-    def observation_space(self, *args, **kwargs):
-        """Returns the observation spec of the sensor."""
-        return gym.spaces.Box(low=0.0, high=255.0, shape=(self.im_height, self.im_width, 3), dtype=np.uint8)
-
+            # 'depth_image': gym.spaces.Box(low=0, high=255, shape=(self.im_width, self.im_height, 3), dtype=np.uint8),
+            # 'segmentation_image': gym.spaces.Box(low=0, high=255, shape=(self.im_width, self.im_height, 3), dtype=np.uint8),
+            # 'speed': gym.spaces.Box(low=0, high=200, shape=(), dtype=np.float32),
+            # 'steer': gym.spaces.Box(low=-1.0, high=1.0, shape=(), dtype=np.float32),
+            # 'distant': gym.spaces.Box(low=0, high=1000, shape=(), dtype=np.float32)
+        })
+        
+    #action space   
     @property
     def action_space(self):
         """Returns the expected action passed to the `step` method."""
@@ -60,8 +66,6 @@ class CarlaEnv(gym.Env):
             return gym.spaces.MultiDiscrete([4, 9])
         else:
             raise NotImplementedError()
-        # TODO: Add discrete actions (here and anywhere else required)
-
 
     def seed(self, seed):
         if not seed:
@@ -70,11 +74,9 @@ class CarlaEnv(gym.Env):
         self._np_random = np.random.RandomState(seed) 
         return seed
 
-    # Resets environment for new episode
     def reset(self):
+        #reset
         self._destroy_agents()
-        # logging.debug("Resetting environment")
-        # Car, sensors, etc. We create them every episode then destroy
         self.collision_hist = []
         self.lane_invasion_hist = []
         self.actor_list = []
@@ -82,60 +84,56 @@ class CarlaEnv(gym.Env):
         self.out_of_loop = 0
         self.dist_from_start = 0
 
-        # self.total_reward = 0
+        self.depth_image = None
+        self.segmentation_image = None
+        self.depth_event = Event()
+        self.segmentation_event = Event()
+        
+        self.vehicle = None
+        self.sensor_depth = None
+        self.sensor_segmentation = None
 
-        self.front_image_Queue = Queue()
-        self.preview_image_Queue = Queue()
-
-        # self.episode += 1
-
-        # When Carla breaks (stopps working) or spawn point is already occupied, spawning a car throws an exception
-        # We allow it to try for 3 seconds then forgive
         spawn_start = time.time()
         while True:
+            # vehicle spawn
             try:
-                # Get random spot from a list from predefined spots and try to spawn a car there
                 self.start_transform = self._get_start_transform()
-                self.end_transform = self._get_end_tranform()
+                self.end_transform = self._get_end_transform()
                 self.prev_dist = self.start_transform.location.distance(self.end_transform.location)
                 self.curr_loc = self.start_transform.location
                 self.vehicle = self.world.spawn_actor(self.lincoln, self.start_transform)
                 break
             except Exception as e:
-                logging.error('Error carla 141 {}'.format(str(e)))
+                logging.error(f'Error spawning vehicle: {e}')
                 time.sleep(0.01)
 
-            # If that can't be done in 3 seconds - forgive (and allow main process to handle for this problem)
             if time.time() > spawn_start + 3:
                 raise Exception('Can\'t spawn a car')
 
-        # Append actor to a list of spawned actors, we need to remove them later
         self.actor_list.append(self.vehicle)
 
-        # TODO: combine the sensors
-        if 'rgb' in self.sensors:
-            self.rgb_cam = self.world.get_blueprint_library().find('sensor.camera.rgb')
-        elif 'semantic' in self.sensors:
-            self.rgb_cam = self.world.get_blueprint_library().find('sensor.camera.semantic_segmentation')
-        else:
-            raise NotImplementedError('unknown sensor type')
+        # segmentation and depth camera 
+        self.segmentation_bp = self.world.get_blueprint_library().find('sensor.camera.semantic_segmentation')
+        self.depth_bp = self.world.get_blueprint_library().find('sensor.camera.depth')
 
-        self.rgb_cam.set_attribute('image_size_x', f'{self.im_width}')
-        self.rgb_cam.set_attribute('image_size_y', f'{self.im_height}')
-        self.rgb_cam.set_attribute('fov', '90')
+        self.segmentation_bp.set_attribute('image_size_x', f'{self.im_width}')
+        self.segmentation_bp.set_attribute('image_size_y', f'{self.im_height}')
+        self.segmentation_bp.set_attribute('fov', '90')
+        self.depth_bp.set_attribute('image_size_x', f'{self.im_width}')
+        self.depth_bp.set_attribute('image_size_y', f'{self.im_height}')
+        self.depth_bp.set_attribute('fov', '90')
 
         bound_x = self.vehicle.bounding_box.extent.x
-        bound_y = self.vehicle.bounding_box.extent.y
-
-
         transform_front = carla.Transform(carla.Location(x=bound_x, z=1.0))
-        self.sensor_front = self.world.spawn_actor(self.rgb_cam, transform_front, attach_to=self.vehicle)
-        self.sensor_front.listen(self.front_image_Queue.put)
-        self.actor_list.extend([self.sensor_front])
+        self.sensor_segmentation = self.world.spawn_actor(self.segmentation_bp, transform_front, attach_to=self.vehicle)
+        self.sensor_depth = self.world.spawn_actor(self.depth_bp, transform_front, attach_to=self.vehicle)
 
-        # Preview ("above the car") camera
+        self.sensor_segmentation.listen(self._segmentation_callback)
+        self.sensor_depth.listen(self._depth_callback)
+
+        self.actor_list.extend([self.sensor_segmentation, self.sensor_depth])
+
         if self.preview_camera_enabled:
-            # TODO: add the configs
             self.preview_cam = self.world.get_blueprint_library().find('sensor.camera.rgb')
             self.preview_cam.set_attribute('image_size_x', '400')
             self.preview_cam.set_attribute('image_size_y', '400')
@@ -145,11 +143,10 @@ class CarlaEnv(gym.Env):
             self.preview_sensor.listen(self.preview_image_Queue.put)
             self.actor_list.append(self.preview_sensor)
 
-        # Here's some workarounds.
         self.vehicle.apply_control(carla.VehicleControl(throttle=1.0, brake=1.0))
         time.sleep(4)
-
-        # Collision history is a list callback is going to append to (we brake simulation on a collision)
+        
+        #collision and lane invation list reset
         self.collision_hist = []
         self.lane_invasion_hist = []
 
@@ -164,21 +161,8 @@ class CarlaEnv(gym.Env):
 
         self.world.tick()
 
-        # Wait for a camera to send first image (important at the beginning of first episode)
-        while self.front_image_Queue.empty():
-            logging.debug("waiting for camera to be ready")
-            time.sleep(0.01)
-            self.world.tick()
-
-        # Disengage brakes
         self.vehicle.apply_control(carla.VehicleControl(brake=0.0))
-
-        image = self.front_image_Queue.get()
-        image = np.array(image.raw_data)
-        image = image.reshape((self.im_height, self.im_width, -1))
-        image = image[:, :, :3]
-
-        return image
+        return self.get_observation()
 
     def step(self, action):
         total_reward = 0
@@ -189,20 +173,15 @@ class CarlaEnv(gym.Env):
                 break
         return obs, total_reward, done, info
 
-    # Steps environment
     def _step(self, action):
         self.world.tick()
         self.render()
             
         self.frame_step += 1
 
-        # Apply control to the vehicle based on an action
+        # action space
         if self.action_type == 'continuous':
             action = carla.VehicleControl(throttle=float(action[0]), steer=float(action[1]))
-            # if action[0] > 0:
-            #     action = carla.VehicleControl(throttle=float(action[0]), steer=float(action[1]), brake=0)
-            # else:
-            #     action = carla.VehicleControl(throttle=0, steer=float(action[1]), brake= -float(action[0]))
         elif self.action_type == 'discrete':
             if action[0] == 0:
                 action = carla.VehicleControl(throttle=0, steer=float((action[1] - 4)/4), brake=1)
@@ -213,37 +192,15 @@ class CarlaEnv(gym.Env):
         logging.debug('{}, {}, {}'.format(action.throttle, action.steer, action.brake))
         self.vehicle.apply_control(action)
 
-        # Calculate speed in km/h from car's velocity (3D vector)
+        #calculate reward
         v = self.vehicle.get_velocity()
         kmh = 3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2)
 
         loc = self.vehicle.get_location()
-
-        #Calculate distant to end
         dist_to_end = loc.distance(self.end_transform.location)
 
-    
         dist_text = str(dist_to_end)
-        self.world.debug.draw_string(location=loc,text=dist_text,life_time=0.01)
-
-        image = self.front_image_Queue.get()
-        image = np.array(image.raw_data)
-        image = image.reshape((self.im_height, self.im_width, -1))
-
-        # TODO: Combine the sensors
-        if 'rgb' in self.sensors:
-            image = image[:, :, :3]
-        if 'semantic' in self.sensors:
-            image = image[:, :, 2]
-            image = (np.arange(13) == image[..., None])
-            image = np.concatenate((image[:, :, 2:3], image[:, :, 6:8]), axis=2)
-            image = image * 255
-            # logging.debug('{}'.format(image.shape))
-            # assert image.shape[0] == self.im_height
-            # assert image.shape[1] == self.im_width
-            # assert image.shape[2] == 3
-
-        # dis_to_left, dis_to_right, sin_diff, cos_diff = dist_to_roadline(self.map, self.vehicle)
+        self.world.debug.draw_string(location=loc, text=dist_text, life_time=0.01)
 
         done = False
         reward = 0
@@ -255,7 +212,6 @@ class CarlaEnv(gym.Env):
             reward += 1000
         self.prev_dist = dist_to_end
 
-        # # If car collided - end and episode and send back a penalty
         if len(self.collision_hist) != 0:
             done = True
             reward += -120
@@ -266,53 +222,35 @@ class CarlaEnv(gym.Env):
             reward += -10
             self.lane_invasion_hist = []
 
-        # # Reward for speed
-        # if not self.playing:
-        #     reward += 0.1 * kmh * (self.frame_step + 1)
-        # else:
-        #     reward += 0.1 * kmh
-
         reward += 0.2 * kmh
 
-        # reward += 1.3 * square_dist_diff
-
-        # # Reward for distance to road lines
-        # if not self.playing:
-        #     reward -= math.exp(-dis_to_left)
-        #     reward -= math.exp(-dis_to_right)
         
         if self.frame_step >= self.steps_per_episode:
             done = True
-
-
-        #self.total_reward += reward
 
         self.world.debug.draw_arrow(begin=self.start_transform.location, end=self.end_transform.location, life_time=1.0)
 
         spectator = self.world.get_spectator()
         transform = self.vehicle.get_transform()
-        spectator.set_transform(carla.Transform(transform.location + carla.Location(z=50),carla.Rotation(pitch=-90)))
+        spectator.set_transform(carla.Transform(transform.location + carla.Location(z=50), carla.Rotation(pitch=-90)))
+
+        obs = self.get_observation()
+        
 
         if done:
-            # info['episode'] = {}
-            # info['episode']['l'] = self.frame_step
-            # info['episode']['r'] = reward
             logging.debug("Env lasts {} steps, restarting ... ".format(self.frame_step))
             self._destroy_agents()
-        
-        return image, reward, done, info
+
+        return obs, reward, done, info
     
     def close(self):
         logging.info("Closes the CARLA server with process PID {}".format(self.server.pid))
+        self._destroy_agents()
         os.killpg(self.server.pid, signal.SIGKILL)
         atexit.unregister(lambda: os.killpg(self.server.pid, signal.SIGKILL))
     
     def render(self, mode='human'):
-        # TODO: clean this
-        # TODO: change the width and height to compat with the preview cam config
-
         if self.preview_camera_enabled:
-
             self._display, self._clock, self._font = graphics.setup(
                 width=400,
                 height=400,
@@ -327,58 +265,28 @@ class CarlaEnv(gym.Env):
                 display=self._display,
                 font=self._font,
                 clock=self._clock,
-                observations={"preview_camera":preview_img},
+                observations={"preview_camera": preview_img},
             )
 
             if mode == "human":
-                # Update window display.
                 pygame.display.flip()
             else:
                 raise NotImplementedError()
 
     def _destroy_agents(self):
-
         for actor in self.actor_list:
-
-            # If it has a callback attached, remove it first
             if hasattr(actor, 'is_listening') and actor.is_listening:
                 actor.stop()
-
-            # If it's still alive - desstroy it
             if actor.is_alive:
                 actor.destroy()
-
         self.actor_list = []
 
     def _collision_data(self, event):
-
-        # What we collided with and what was the impulse
-        collision_actor_id = event.other_actor.type_id
-        collision_impulse = math.sqrt(event.normal_impulse.x ** 2 + event.normal_impulse.y ** 2 + event.normal_impulse.z ** 2)
-
-        # # Filter collisions
-        # for actor_id, impulse in COLLISION_FILTER:
-        #     if actor_id in collision_actor_id and (impulse == -1 or collision_impulse <= impulse):
-        #         return
-
-        # Add collision
         self.collision_hist.append(event)
     
     def _lane_invasion_data(self, event):
-        # Change this function to filter lane invasions
         self.lane_invasion_hist.append(event)
 
-    def _on_highway(self):
-        goal_abs_lane_id = 4
-        vehicle_waypoint_closest_to_road = \
-            self.map.get_waypoint(self.vehicle.get_location(), project_to_road=True, lane_type=carla.LaneType.Driving)
-        road_id = vehicle_waypoint_closest_to_road.road_id
-        lane_id_sign = int(np.sign(vehicle_waypoint_closest_to_road.lane_id))
-        assert lane_id_sign in [-1, 1]
-        goal_lane_id = goal_abs_lane_id * lane_id_sign
-        vehicle_s = vehicle_waypoint_closest_to_road.s
-        goal_waypoint = self.map.get_waypoint_xodr(road_id, goal_lane_id, vehicle_s)
-        return not (goal_waypoint is None)
 
     def _get_start_transform(self):
         if self.start_transform_type == 'random':
@@ -391,15 +299,50 @@ class CarlaEnv(gym.Env):
                 for trial in range(10):
                     start_transform = random.choice(self.map.get_spawn_points())
                     start_waypoint = self.map.get_waypoint(start_transform.location)
-                    if start_waypoint.road_id in list(range(35, 50)): # TODO: change this
+                    if start_waypoint.road_id in list(range(35, 50)):
                         break
                 return start_transform
             else:
                 raise NotImplementedError
             
-    def _get_end_tranform(self):
+    def _get_end_transform(self):
         indices = [213, 215, 217, 71, 221, 224, 72, 87, 108]
         end_transform = []
         for i in indices:
             end_transform.append(self.map.get_spawn_points()[i])
         return random.choice(end_transform)
+
+    def _depth_callback(self, image):
+        self.depth_image = np.array(image.raw_data).reshape((self.im_width, self.im_height, -1))[:, :, :3]
+        self.depth_event.set()
+
+    def _segmentation_callback(self, image):
+        self.segmentation_image = np.array(image.raw_data).reshape((self.im_width, self.im_height, -1))[:, :, :3]
+        self.segmentation_event.set()
+
+    def get_observation(self):
+        self.depth_event.clear()
+        self.segmentation_event.clear()
+
+        while not (self.depth_event.is_set() and self.segmentation_event.is_set()):
+            time.sleep(0.01)
+            self.world.tick()
+
+        velocity = self.vehicle.get_velocity()
+        speed = np.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
+        control = self.vehicle.get_control()
+        steer = control.steer
+        distant = self.vehicle.get_location().distance(self.end_transform.location)
+        
+        combine_image = np.concatenate((self.depth_image, self.segmentation_image), axis = 2)
+        vehicle = np.array([speed,steer,distant])
+        observation = {
+            # 'depth_image': self.depth_image,
+            # 'segmentation_image': self.segmentation_image,
+            'image': combine_image,
+            'vehicle': vehicle
+            # 'speed': speed,
+            # 'steer': steer,
+            # 'distant': distant
+        }
+        return observation
