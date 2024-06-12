@@ -31,7 +31,7 @@ def main(model_name, load_model, town, fps, im_width, im_height, repeat_action, 
                 action_noise=NormalActionNoise(mean=np.array([0.3, 0.0]), sigma=np.array([0.5, 0.1])))
         else:
             model = SAC(
-                CnnPolicy, 
+                "MlpPolicy", 
                 env,
                 verbose=2,
                 buffer_size=10000,
@@ -42,7 +42,7 @@ def main(model_name, load_model, town, fps, im_width, im_height, repeat_action, 
                 )
             print(model.__dict__)
             model.learn(    
-                total_timesteps=100000, 
+                total_timesteps=10000000, 
                 log_interval=4,
                 tb_log_name=model_name,
                 callback=checkpoint_callback

@@ -15,6 +15,7 @@ from setup import setup
 from absl import logging
 import graphics
 import pygame
+from encoder_init import EncodeState
 logging.set_verbosity(logging.INFO)
 
 # Carla environment
@@ -49,7 +50,7 @@ class CarlaEnv(gym.Env):
     @property
     def observation_space(self, *args, **kwargs):
         """Returns the observation spec of the sensor."""
-        return gym.spaces.Box(low=0.0, high=255.0, shape=(self.im_height, self.im_width, 3), dtype=np.uint8)
+        return gym.spaces.Box(low=-np.inf, high=np.inf, shape=(99,), dtype=np.float32)
 
     @property
     def action_space(self):
@@ -69,11 +70,16 @@ class CarlaEnv(gym.Env):
         random.seed(seed)
         self._np_random = np.random.RandomState(seed) 
         return seed
+    
+    def vector(self, v):
+        if isinstance(v, carla.Location) or isinstance(v, carla.Vector3D):
+            return np.array([v.x, v.y, v.z])
+        elif isinstance(v, carla.Rotation):
+            return np.array([v.pitch, v.yaw, v.roll])
 
     # Resets environment for new episode
     def reset(self):
         self._destroy_agents()
-        # logging.debug("Resetting environment")
         # Car, sensors, etc. We create them every episode then destroy
         self.collision_hist = []
         self.lane_invasion_hist = []
@@ -82,12 +88,10 @@ class CarlaEnv(gym.Env):
         self.out_of_loop = 0
         self.dist_from_start = 0
 
-        # self.total_reward = 0
-
         self.front_image_Queue = Queue()
         self.preview_image_Queue = Queue()
 
-        # self.episode += 1
+        self.encode = EncodeState(95)
 
         # When Carla breaks (stopps working) or spawn point is already occupied, spawning a car throws an exception
         # We allow it to try for 3 seconds then forgive
@@ -122,7 +126,7 @@ class CarlaEnv(gym.Env):
 
         self.rgb_cam.set_attribute('image_size_x', f'{self.im_width}')
         self.rgb_cam.set_attribute('image_size_y', f'{self.im_height}')
-        self.rgb_cam.set_attribute('fov', '90')
+        self.rgb_cam.set_attribute('fov', '125')
 
         bound_x = self.vehicle.bounding_box.extent.x
         bound_y = self.vehicle.bounding_box.extent.y
@@ -162,6 +166,10 @@ class CarlaEnv(gym.Env):
         self.actor_list.append(self.colsensor)
         self.actor_list.append(self.lanesensor)
 
+        loc = self.vehicle.get_location()
+        self.previous_steer = float(0.0)
+        self.dist_to_end = loc.distance(self.end_transform.location)
+
         self.world.tick()
 
         # Wait for a camera to send first image (important at the beginning of first episode)
@@ -178,7 +186,12 @@ class CarlaEnv(gym.Env):
         image = image.reshape((self.im_height, self.im_width, -1))
         image = image[:, :, :3]
 
-        return image
+        navigation_obs = np.array([float(0.0), float(0.0), self.previous_steer, self.dist_to_end])
+        encoded_image = self.encode.process([image, navigation_obs])
+        encoded_image = encoded_image.cpu().numpy()
+        # print(encoded_image, encoded_image.size())
+
+        return encoded_image
 
     def step(self, action):
         total_reward = 0
@@ -220,28 +233,33 @@ class CarlaEnv(gym.Env):
         loc = self.vehicle.get_location()
 
         #Calculate distant to end
-        dist_to_end = loc.distance(self.end_transform.location)
+        self.dist_to_end = loc.distance(self.end_transform.location)
 
-    
-        dist_text = str(dist_to_end)
+        dist_text = str(self.dist_to_end)
         self.world.debug.draw_string(location=loc,text=dist_text,life_time=0.01)
 
         image = self.front_image_Queue.get()
         image = np.array(image.raw_data)
-        image = image.reshape((self.im_height, self.im_width, -1))
+        image = image.reshape((self.im_height, self.im_width, -1))        
+        image = image[:,:,:3]
+
+        navigation_obs = np.array([action.throttle, action.steer, self.previous_steer, self.dist_to_end])
+        encoded_image = self.encode.process([image, navigation_obs])
+        encoded_image = encoded_image.cpu().numpy()
+        # print(encoded_image, encoded_image.size())
+
+        self.previous_steer = action.steer
+
+        
 
         # TODO: Combine the sensors
-        if 'rgb' in self.sensors:
-            image = image[:, :, :3]
-        if 'semantic' in self.sensors:
-            image = image[:, :, 2]
-            image = (np.arange(13) == image[..., None])
-            image = np.concatenate((image[:, :, 2:3], image[:, :, 6:8]), axis=2)
-            image = image * 255
-            # logging.debug('{}'.format(image.shape))
-            # assert image.shape[0] == self.im_height
-            # assert image.shape[1] == self.im_width
-            # assert image.shape[2] == 3
+        # if 'rgb' in self.sensors:
+        #     image = image[:, :, :3]
+        # if 'semantic' in self.sensors:
+        #     image = image[:, :, 2]
+        #     image = (np.arange(13) == image[..., None])
+        #     image = np.concatenate((image[:, :, 2:3], image[:, :, 6:8]), axis=2)
+        #     image = image * 255
 
         # dis_to_left, dis_to_right, sin_diff, cos_diff = dist_to_roadline(self.map, self.vehicle)
 
@@ -249,21 +267,21 @@ class CarlaEnv(gym.Env):
         reward = 0
         info = dict()
 
-        reward += (self.prev_dist - dist_to_end) * 3
-        if dist_to_end < 2.0:
+        reward += (self.prev_dist - self.dist_to_end) * 2
+        if self.dist_to_end < 2.0:
             done = True
             reward += 1000
-        self.prev_dist = dist_to_end
+        self.prev_dist = self.dist_to_end
 
         # # If car collided - end and episode and send back a penalty
         if len(self.collision_hist) != 0:
             done = True
-            reward += -120
+            reward += -200
             self.collision_hist = []
             self.lane_invasion_hist = []
 
         if len(self.lane_invasion_hist) != 0:
-            reward += -10
+            reward += -20
             self.lane_invasion_hist = []
 
         # # Reward for speed
@@ -272,7 +290,7 @@ class CarlaEnv(gym.Env):
         # else:
         #     reward += 0.1 * kmh
 
-        reward += 0.2 * kmh
+        reward += 0.1 * kmh
 
         # reward += 1.3 * square_dist_diff
 
@@ -300,7 +318,7 @@ class CarlaEnv(gym.Env):
             logging.debug("Env lasts {} steps, restarting ... ".format(self.frame_step))
             self._destroy_agents()
         
-        return image, reward, done, info
+        return encoded_image, reward, done, info
     
     def close(self):
         logging.info("Closes the CARLA server with process PID {}".format(self.server.pid))
