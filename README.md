@@ -7,7 +7,7 @@ Reinforcement Learning and Data Collection for self-driving in [Carla](https://g
 ### Reinforcement Learning
 
 Go to the `Carla-RL` folder, and run:  
-`python train_sac.py --model-name sem_sac --width 160 --height 80 --repeat-action 4 --start-location highway --sensor semantic --episode-length 600`
+`python train_sac.py --model-name sem_sac --width 160 --height 80 --repeat-action 4 --start-location highway --sensor semantic --episode-length 2000`
 
 #### More training/evaluation options
 

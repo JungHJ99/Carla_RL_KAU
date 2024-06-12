@@ -268,7 +268,7 @@ class CarlaEnv(gym.Env):
         info = dict()
 
         reward += (self.prev_dist - self.dist_to_end) * 2
-        if self.dist_to_end < 2.0:
+        if self.dist_to_end < 3.0:
             done = True
             reward += 1000
         self.prev_dist = self.dist_to_end
@@ -276,12 +276,12 @@ class CarlaEnv(gym.Env):
         # # If car collided - end and episode and send back a penalty
         if len(self.collision_hist) != 0:
             done = True
-            reward += -200
+            reward += -120
             self.collision_hist = []
             self.lane_invasion_hist = []
 
         if len(self.lane_invasion_hist) != 0:
-            reward += -20
+            reward += -10
             self.lane_invasion_hist = []
 
         # # Reward for speed
@@ -290,7 +290,7 @@ class CarlaEnv(gym.Env):
         # else:
         #     reward += 0.1 * kmh
 
-        reward += 0.1 * kmh
+        reward += 0.2 * kmh
 
         # reward += 1.3 * square_dist_diff
 
