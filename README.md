@@ -13,7 +13,7 @@ python train_sac.py --model-name sem_sac --width 96 --height 96 --repeat-action 
 
 vae running code
 `
-python train_sac.py --model-name sem_sac --width 160 --height 80 --repeat-action 4 --start-location fixed --sensor semantic --episode-length 600 --map Town01
+python train_sac.py --model-name sem_sac --width 160 --height 80 --repeat-action 4 --start-location fixed --sensor semantic --episode-length 2000 --map Town01
 `
 #### More training/evaluation options
 `
