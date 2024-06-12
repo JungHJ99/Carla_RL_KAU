@@ -267,8 +267,8 @@ class CarlaEnv(gym.Env):
         reward = 0
         info = dict()
 
-        reward += (self.prev_dist - self.dist_to_end) * 2
-        if self.dist_to_end < 3.0:
+        reward += (self.prev_dist - self.dist_to_end) * 3
+        if self.dist_to_end < 2.0:
             done = True
             reward += 1000
         self.prev_dist = self.dist_to_end
