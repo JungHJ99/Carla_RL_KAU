@@ -9,6 +9,10 @@ Reinforcement Learning and Data Collection for self-driving in [Carla](https://g
 Go to the `Carla-RL` folder, and run:  
 `python train_sac.py --model-name sem_sac --width 160 --height 80 --repeat-action 4 --start-location highway --sensor semantic --episode-length 2000`
 
+### 학습한 모델 테스트
+
+`python train_sac.py --model-name logs/sac_model_90000_steps --map Town01 --width 160 --height 80 --repeat-action 4 --start-location fixed --sensor semantic --episode-length 2000 --load True`
+
 #### More training/evaluation options
 
 `python train_sac.py -h`
@@ -31,6 +35,10 @@ You can define pytorch custom datasets in the `datasets` folder and additional p
 Modify `manual_control.py` to include the new sensors you added to the car, and (after you launched Carla) run
 `python manual_control.py`
 to see them in action.
+
+## To view the training progress/plots in the Tensorboard:
+
+`tensorboard --logdir sem_sac`
 
 ## References
 
