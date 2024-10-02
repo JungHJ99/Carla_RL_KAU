@@ -6,4 +6,6 @@ python3 train_sac.py \
     --repeat-action 4 \
     --start-location fixed \
     --sensor semantic \
-    --episode-length 1200
+    --episode-length 1200 \
+    --port-num 3000
+

@@ -14,12 +14,12 @@ import numpy as np
 
 
 def main(model_name, load_model, town, fps, im_width, im_height, repeat_action, start_transform_type, sensors, 
-         enable_preview, steps_per_episode, seed=7, action_type='continuous'):
+         enable_preview, steps_per_episode, port_num, seed=7, action_type='continuous'):
 
     env = CarlaEnv(town, fps, im_width, im_height, repeat_action, start_transform_type, sensors,
-                   action_type, enable_preview, steps_per_episode, playing=False)
+                   action_type, port_num, enable_preview, steps_per_episode, playing=False, timeout=60)
     test_env = CarlaEnv(town, fps, im_width, im_height, repeat_action, start_transform_type, sensors,
-                   action_type, enable_preview=False, steps_per_episode=steps_per_episode, playing=True)
+                   action_type, port_num, enable_preview=False, steps_per_episode=steps_per_episode, playing=True, timeout=60)
     
     checkpoint_callback = CheckpointCallback(save_freq=10000, save_path='./logs/', name_prefix='sac_model')
     
@@ -78,6 +78,7 @@ if __name__ == "__main__":
     parser.add_argument('--preview', action='store_true', help='whether to enable preview camera')
     parser.add_argument('--episode-length', type=int, help='maximum number of steps per episode')
     parser.add_argument('--seed', type=int, default=7, help='random seed for initialization')
+    parser.add_argument('--port-num', type=int, default=2000, help='port number')
     
     args = parser.parse_args()
     model_name = args.model_name
@@ -92,6 +93,7 @@ if __name__ == "__main__":
     enable_preview = args.preview
     steps_per_episode = args.episode_length
     seed = args.seed
+    port_num = args.port_num
 
     main(model_name, load_model, town, fps, im_width, im_height, repeat_action, start_transform_type, sensors, 
-         enable_preview, steps_per_episode, seed)
+         enable_preview, steps_per_episode, port_num, seed)
