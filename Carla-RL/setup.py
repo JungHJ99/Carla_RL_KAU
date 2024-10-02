@@ -28,6 +28,7 @@ def setup(
     server_timestop: float = 30.0,
     client_timeout: float = 20.0,
     num_max_restarts: int = 10,
+    port_num: int = 2000
 ):
     """Returns the `CARLA` `server`, `client` and `world`.
 
@@ -57,7 +58,7 @@ def setup(
 
         # Random assignment of port.
         # port = np.random.randint(2000, 3000)
-        port = 2000 + attempts
+        port = port_num + attempts
 
         # Start CARLA server.
         env = os.environ.copy()

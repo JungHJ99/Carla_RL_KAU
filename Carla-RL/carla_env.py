@@ -24,10 +24,10 @@ class CarlaEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, town, fps, im_width, im_height, repeat_action, start_transform_type, sensors,
-                 action_type, enable_preview, steps_per_episode, playing=False, timeout=60):
+                 action_type, port_num, enable_preview, steps_per_episode, playing=False, timeout=60):
         super(CarlaEnv, self).__init__()
 
-        self.client, self.world, self.frame, self.server = setup(town=town, fps=fps, client_timeout=timeout)
+        self.client, self.world, self.frame, self.server = setup(town=town, fps=fps, client_timeout=timeout, port_num=port_num)
         self.client.set_timeout(5.0)
         self.map = self.world.get_map()
         blueprint_library = self.world.get_blueprint_library()
