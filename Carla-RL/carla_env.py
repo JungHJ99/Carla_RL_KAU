@@ -402,7 +402,8 @@ class CarlaEnv(gym.Env):
         if self.start_transform_type == 'random':
             return random.choice(self.map.get_spawn_points())
         if self.start_transform_type == 'fixed':
-            start_transform = self.map.get_spawn_points()[70]
+            return random.choice(self.map.get_spawn_points())
+            #start_transform = self.map.get_spawn_points()[70]
             return start_transform
         if self.start_transform_type == 'highway':
             if self.map.name == "Town04":
@@ -416,8 +417,9 @@ class CarlaEnv(gym.Env):
                 raise NotImplementedError
             
     def _get_end_tranform(self):
-        indices = [213, 215, 217, 71, 221, 224, 72, 87, 108]
-        end_transform = []
-        for i in indices:
-            end_transform.append(self.map.get_spawn_points()[i])
-        return random.choice(end_transform)
+        return random.choice(self.map.get_spawn_points())
+        #indices = [213, 215, 217, 71, 221, 224, 72, 87, 108]
+        #end_transform = []
+        #for i in indices:
+            #end_transform.append(self.map.get_spawn_points()[i])
+        #return random.choice(end_transform)
